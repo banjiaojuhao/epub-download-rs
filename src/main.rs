@@ -1,9 +1,7 @@
-use std::path::Path;
 use rusty_leveldb::{DB, Options};
 use std::env::args;
-use std::io::BufRead;
 use reqwest::Url;
-use bytes::{Bytes, Buf};
+use bytes::{Buf};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use std::ops::Add;
@@ -14,9 +12,9 @@ struct DownloadItem {
     is_html: bool,
 }
 
-struct ResourceItem<'a> {
-    path: &'a str,
-    content: &'a [u8],
+struct ResourceItem {
+    path: String,
+    content: Vec<u8>,
 }
 
 
@@ -27,18 +25,18 @@ fn main() {
 
     let default_files = vec![
         ResourceItem {
-            path: "mimetype",
-            content: b"application/epub+zip",
+            path: String::from("mimetype"),
+            content: b"application/epub+zip".to_vec(),
         },
         ResourceItem {
-            path: "META-INF/container.xml",
+            path: String::from("META-INF/container.xml"),
             content: br#"<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
    <rootfiles>
       <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
    </rootfiles>
 </container>
-"#,
+"#.to_vec(),
         }
     ];
 
@@ -80,7 +78,55 @@ fn download_epub(url: &str, mut db: &mut DB, default_files: &Vec<ResourceItem>) 
 
     parse_index(contents_str.as_str(), &mut title, &mut author, &mut download_list);
 
+    let mut resource_list: Vec<ResourceItem> = Vec::new();
 
+    let base_url = Url::parse(url).unwrap();
+    for download_item in download_list {
+        let url = base_url.join(download_item.href.as_str()).unwrap();
+        let content = cached_get(url.as_str(), &mut db).unwrap();
+        if download_item.is_html {
+            let new_html = parse_content(content);
+
+            resource_list.push(ResourceItem {
+                path: String::from(download_item.href),
+                content: new_html,
+            })
+        } else {
+            resource_list.push(ResourceItem { path: String::from(download_item.href), content })
+        };
+    }
+
+    // download resources
+    // postprocess html(extract content and fix css)
+    // zip files
+}
+
+fn parse_content(content: Vec<u8>) -> Vec<u8> {
+    let html = String::from_utf8(content).unwrap();
+
+    let head_prefix = "<head>";
+    let head_postfix = "<script";
+    let head_start = html.find(head_prefix).unwrap() + head_prefix.len();
+    let head_end = html.find(head_postfix).unwrap() - 1;
+
+    let content_prefix = r#"<div class="readercontent"><div class="readercontent-inner">"#;
+    let content_postfix = r#"</div></div></div>"#;
+    let content_start = html.find(content_prefix).unwrap() + content_prefix.len();
+    let content_end = html.rfind(content_postfix).unwrap() - 1;
+
+    let new_html = format!(r#"<?xml version='1.0' encoding='utf-8'?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    {}
+  </head>
+  <body class="calibre">
+    {}
+  </body>
+</html>"#,
+                           &html.as_str()[head_start..head_end],
+                           &html.as_str()[content_start..content_end]
+    ).as_bytes().to_vec();
+    new_html
 }
 
 fn parse_index(contents_str: &str, title: &mut String, author: &mut String, download_list: &mut Vec<DownloadItem>) {
@@ -147,11 +193,15 @@ fn parse_index(contents_str: &str, title: &mut String, author: &mut String, down
 
 fn cached_get(url: &str, db: &mut DB) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     return match db.get(url.as_bytes()) {
-        Some(value) => Ok(value),
+        Some(value) => {
+            println!("cache hit {}", url);
+            Ok(value)
+        }
         None => {
             let bytes = reqwest::blocking::get(url)?
                 .bytes()?;
             db.put(url.as_bytes(), bytes.bytes());
+            println!("downloaded {}", url);
             Ok(bytes.to_vec())
         }
     };
