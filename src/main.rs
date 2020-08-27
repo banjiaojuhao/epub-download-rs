@@ -5,6 +5,10 @@ use bytes::{Buf};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use std::ops::Add;
+use std::fs::File;
+use std::path::Path;
+use zip::write::FileOptions;
+use std::io::Write;
 
 
 struct DownloadItem {
@@ -19,7 +23,11 @@ struct ResourceItem {
 
 
 fn main() {
-    let epub_path = "epub";
+    let download_path = Path::new("epub");
+    if !download_path.exists() {
+        std::fs::create_dir(&download_path).unwrap();
+    };
+
     let mut cache_db = DB::open("cache.leveldb", Options::default())
         .expect("failed to open cache.leveldb");
 
@@ -60,15 +68,13 @@ fn main() {
             //     continue;
             // };
 
-            download_epub(url, &mut cache_db, &default_files);
+            download_epub(url, &mut cache_db, &download_path, &default_files);
             break;
         }
     }
 }
 
-fn download_epub(url: &str, mut db: &mut DB, default_files: &Vec<ResourceItem>) {
-    let book_id = &url[41..73];
-
+fn download_epub(url: &str, mut db: &mut DB, download_path: &Path, default_files: &Vec<ResourceItem>) {
     let contents = cached_get(String::from(url).add("content.opf").as_str(), &mut db).unwrap();
     let contents_str = String::from_utf8(contents).unwrap();
 
@@ -95,6 +101,30 @@ fn download_epub(url: &str, mut db: &mut DB, default_files: &Vec<ResourceItem>) 
             resource_list.push(ResourceItem { path: String::from(download_item.href), content })
         };
     }
+
+    let epub_path = download_path.join(Path::new(format!("{} - {}.epub", title, author).as_str()));
+    if epub_path.exists() {
+        std::fs::remove_file(&epub_path).unwrap();
+    };
+    let mut epub = zip::ZipWriter::new(File::create(&epub_path).unwrap());
+    let options = FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    epub.start_file("content.opf", options).unwrap();
+    epub.write_all(&contents_str.into_bytes()).unwrap();
+
+    for item in default_files {
+        epub.start_file(&item.path, options).unwrap();
+        epub.write_all(&item.content).unwrap();
+    }
+
+    for item in resource_list {
+        epub.start_file(&item.path, options).unwrap();
+        epub.write_all(&item.content).unwrap();
+    }
+
+    epub.finish().unwrap();
+
+    println!("epub saved in {}", epub_path.to_str().unwrap());
 
     // download resources
     // postprocess html(extract content and fix css)
@@ -160,7 +190,7 @@ fn parse_index(contents_str: &str, title: &mut String, author: &mut String, down
             Ok(Event::Empty(ref e)) => {
                 if is_manifest && e.name() == b"item" {
                     let mut item: DownloadItem = DownloadItem { href: "".to_string(), is_html: false };
-                    let attr = e.attributes().for_each(|a| {
+                    e.attributes().for_each(|a| {
                         let a = a.unwrap();
                         match a.key {
                             b"href" => {
@@ -200,7 +230,7 @@ fn cached_get(url: &str, db: &mut DB) -> Result<Vec<u8>, Box<dyn std::error::Err
         None => {
             let bytes = reqwest::blocking::get(url)?
                 .bytes()?;
-            db.put(url.as_bytes(), bytes.bytes());
+            db.put(url.as_bytes(), bytes.bytes()).unwrap();
             println!("downloaded {}", url);
             Ok(bytes.to_vec())
         }
