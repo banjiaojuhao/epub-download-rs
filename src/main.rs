@@ -49,27 +49,25 @@ fn main() {
     ];
 
     if args().len() == 1 {
-        // let mut url = String::new();
-        let url = "http://reader.epubee.com/books/mobile/5f/5f80cfe69440056dc623f051c2f76246/";
+        let mut url = String::new();
 
         loop {
-            // println!("please input url like: \
-            // http://reader.epubee.com/books/mobile/5f/5f80cfe69440056dc623f051c2f76246/\n\
-            // q to quit");
-            //
-            // std::io::stdin().read_line(&mut url).unwrap();
-            //
-            // if url.trim() == "q" {
-            //     break;
-            // }
-            //
-            // if url.len() != 74 {
-            //     println!("invalid url format");
-            //     continue;
-            // };
+            println!("please input url like: \
+            http://reader.epubee.com/books/mobile/5f/5f80cfe69440056dc623f051c2f76246/\n\
+            q to quit");
 
-            download_epub(url, &mut cache_db, &download_path, &default_files);
-            break;
+            std::io::stdin().read_line(&mut url).unwrap();
+
+            if url.trim() == "q" {
+                break;
+            }
+
+            if url.len() != 74 {
+                println!("invalid url format");
+                continue;
+            };
+
+            download_epub(&url, &mut cache_db, &download_path, &default_files);
         }
     }
 }
@@ -125,10 +123,6 @@ fn download_epub(url: &str, mut db: &mut DB, download_path: &Path, default_files
     epub.finish().unwrap();
 
     println!("epub saved in {}", epub_path.to_str().unwrap());
-
-    // download resources
-    // postprocess html(extract content and fix css)
-    // zip files
 }
 
 fn parse_content(content: Vec<u8>) -> Vec<u8> {
