@@ -56,9 +56,15 @@ fn main() {
             http://reader.epubee.com/books/mobile/5f/5f80cfe69440056dc623f051c2f76246/\n\
             q to quit");
 
+            url.clear();
             std::io::stdin().read_line(&mut url).unwrap();
+            // remove trailing \n or \r\n
+            url.pop().unwrap();
+            if url.ends_with("\r") {
+                url.pop().unwrap();
+            }
 
-            if url.trim() == "q" {
+            if url == "q" {
                 break;
             }
 
@@ -222,7 +228,17 @@ fn cached_get(url: &str, db: &mut DB) -> Result<Vec<u8>, Box<dyn std::error::Err
             Ok(value)
         }
         None => {
-            let bytes = reqwest::blocking::get(url)?
+            let mut buf = String::new();
+            let response = loop {
+                let resp = reqwest::blocking::get(url)?;
+                if !resp.status().is_success() {
+                    println!("failed to download, please check network.\npress enter to continue.");
+                    std::io::stdin().read_line(&mut buf).unwrap();
+                } else {
+                    break resp;
+                };
+            };
+            let bytes = response
                 .bytes()?;
             db.put(url.as_bytes(), bytes.bytes()).unwrap();
             println!("downloaded {}", url);
