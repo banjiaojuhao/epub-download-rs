@@ -106,7 +106,17 @@ fn download_epub(url: &str, mut db: &mut DB, download_path: &Path, default_files
         };
     }
 
-    let epub_path = download_path.join(Path::new(format!("{} - {}.epub", title, author).as_str()));
+    let epub_path = download_path.join(
+        Path::new(format!("{} - {}.epub", title, author)
+            .replace(":", " ")
+            .replace("/", " ")
+            .replace("\\", " ")
+            .replace("*", " ")
+            .replace("\"", " ")
+            .replace("<", " ")
+            .replace(">", " ")
+            .replace("|", " ")
+            .as_str()));
     if epub_path.exists() {
         std::fs::remove_file(&epub_path).unwrap();
     };
