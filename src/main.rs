@@ -1,15 +1,17 @@
-use rusty_leveldb::{DB, Options};
 use std::env::args;
-use reqwest::Url;
-use bytes::{Buf};
-use quick_xml::Reader;
-use quick_xml::events::Event;
-use std::ops::Add;
 use std::fs::File;
-use std::path::Path;
-use zip::write::FileOptions;
 use std::io::Write;
+use std::ops::Add;
+use std::path::Path;
+use std::time::Duration;
 
+use bytes::Buf;
+use quick_xml::events::Event;
+use quick_xml::Reader;
+use reqwest::{Result, Url};
+use reqwest::blocking::Client;
+use rusty_leveldb::{DB, Options};
+use zip::write::FileOptions;
 
 struct DownloadItem {
     href: String,
@@ -50,6 +52,9 @@ fn main() {
 
     if args().len() == 1 {
         let mut url = String::new();
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build().unwrap();
 
         loop {
             println!("please input url like: \
@@ -73,13 +78,15 @@ fn main() {
                 continue;
             };
 
-            download_epub(&url, &mut cache_db, &download_path, &default_files);
+            download_epub(&url, &mut cache_db, &download_path, &default_files, &client);
         }
     }
 }
 
-fn download_epub(url: &str, mut db: &mut DB, download_path: &Path, default_files: &Vec<ResourceItem>) {
-    let contents = cached_get(String::from(url).add("content.opf").as_str(), &mut db).unwrap();
+fn download_epub(url: &str, mut db: &mut DB, download_path: &Path,
+                 default_files: &Vec<ResourceItem>, client: &Client) {
+    let contents = cached_get(String::from(url).add("content.opf").as_str(),
+                              &mut db, &client).unwrap();
     let contents_str = String::from_utf8(contents).unwrap();
 
     let mut title = String::new();
@@ -93,7 +100,7 @@ fn download_epub(url: &str, mut db: &mut DB, download_path: &Path, default_files
     let base_url = Url::parse(url).unwrap();
     for download_item in download_list {
         let url = base_url.join(download_item.href.as_str()).unwrap();
-        let content = cached_get(url.as_str(), &mut db).unwrap();
+        let content = cached_get(url.as_str(), &mut db, &client).unwrap();
         if download_item.is_html {
             let new_html = parse_content(content);
 
@@ -147,7 +154,14 @@ fn parse_content(content: Vec<u8>) -> Vec<u8> {
     let head_prefix = "<head>";
     let head_postfix = "<script";
     let head_start = html.find(head_prefix).unwrap() + head_prefix.len();
-    let head_end = html.find(head_postfix).unwrap() - 1;
+    let head_end = match html.find(head_postfix) {
+        Some(x) => {
+            x - 1
+        }
+        None => {
+            return html.as_bytes().to_vec();
+        }
+    };
 
     let content_prefix = r#"<div class="readercontent"><div class="readercontent-inner">"#;
     let content_postfix = r#"</div></div></div>"#;
@@ -231,7 +245,7 @@ fn parse_index(contents_str: &str, title: &mut String, author: &mut String, down
     }
 }
 
-fn cached_get(url: &str, db: &mut DB) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn cached_get(url: &str, db: &mut DB, client: &Client) -> Result<Vec<u8>> {
     return match db.get(url.as_bytes()) {
         Some(value) => {
             println!("cache hit {}", url);
@@ -240,12 +254,15 @@ fn cached_get(url: &str, db: &mut DB) -> Result<Vec<u8>, Box<dyn std::error::Err
         None => {
             let mut buf = String::new();
             let response = loop {
-                let resp = reqwest::blocking::get(url)?;
-                if !resp.status().is_success() {
-                    println!("failed to download, please check network.\npress enter to continue.");
-                    std::io::stdin().read_line(&mut buf).unwrap();
-                } else {
-                    break resp;
+                match client.get(url).send() {
+                    Ok(x) => break x,
+                    Err(e) => {
+                        if e.is_timeout() {
+                            continue;
+                        }
+                        println!("failed to download, please check network.\npress enter to continue.");
+                        std::io::stdin().read_line(&mut buf).unwrap();
+                    }
                 };
             };
             let bytes = response
