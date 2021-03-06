@@ -51,7 +51,8 @@ fn main() {
     ];
 
     if args().len() == 1 {
-        let mut url = String::new();
+        let mut _url = String::new();
+        let mut url: &str;
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(10))
             .build().unwrap();
@@ -61,13 +62,9 @@ fn main() {
             http://reader.epubee.com/books/mobile/5f/5f80cfe69440056dc623f051c2f76246/\n\
             q to quit");
 
-            url.clear();
-            std::io::stdin().read_line(&mut url).unwrap();
-            // remove trailing \n or \r\n
-            url.pop().unwrap();
-            if url.ends_with("\r") {
-                url.pop().unwrap();
-            }
+            _url.clear();
+            std::io::stdin().read_line(&mut _url).unwrap();
+            url = _url.trim();
 
             if url == "q" {
                 break;
@@ -78,7 +75,7 @@ fn main() {
                 continue;
             };
 
-            download_epub(&url, &mut cache_db, &download_path, &default_files, &client);
+            download_epub(url, &mut cache_db, &download_path, &default_files, &client);
         }
     }
 }
